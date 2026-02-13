@@ -4,11 +4,11 @@ import os
 import zipfile
 import smtplib
 import re
+import subprocess
 from email.message import EmailMessage
-from pydub import AudioSegment
 
 # -----------------------------
-# LOAD SECRETS (Streamlit Cloud)
+# LOAD SECRETS
 # -----------------------------
 SENDER_EMAIL = st.secrets["SENDER_EMAIL"]
 EMAIL_PASSWORD = st.secrets["EMAIL_PASSWORD"]
@@ -22,9 +22,6 @@ st.set_page_config(
     layout="centered"
 )
 
-# -----------------------------
-# CUSTOM UI
-# -----------------------------
 st.markdown("""
 <style>
 .big-title {
@@ -70,14 +67,14 @@ def is_valid_email(email):
     return re.match(pattern, email)
 
 # -----------------------------
-# DOWNLOAD FUNCTION
+# DOWNLOAD
 # -----------------------------
 def download_videos(singer, num_videos):
     os.makedirs("downloads", exist_ok=True)
 
     ydl_opts = {
         'format': 'bestaudio/best',
-        'outtmpl': 'downloads/%(title)s.%(ext)s',
+        'outtmpl': 'downloads/%(id)s.%(ext)s',
         'quiet': True
     }
 
@@ -87,22 +84,43 @@ def download_videos(singer, num_videos):
         ydl.download([search_query])
 
 # -----------------------------
-# AUDIO PROCESSING
+# AUDIO PROCESSING (FFMPEG)
 # -----------------------------
-def convert_trim_merge(duration, output_name):
-    combined = AudioSegment.empty()
+def create_mashup(duration, output_file):
+    trimmed_files = []
 
     for file in os.listdir("downloads"):
-        if file.endswith((".webm", ".m4a", ".mp4")):
-            path = os.path.join("downloads", file)
-            audio = AudioSegment.from_file(path)
-            trimmed = audio[:duration * 1000]
-            combined += trimmed
+        input_path = os.path.join("downloads", file)
+        trimmed_path = f"downloads/trimmed_{file}.mp3"
 
-    combined.export(output_name, format="mp3")
+        subprocess.run([
+            "ffmpeg",
+            "-y",
+            "-i", input_path,
+            "-t", str(duration),
+            "-acodec", "mp3",
+            trimmed_path
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        trimmed_files.append(trimmed_path)
+
+    # Create file list for merging
+    with open("file_list.txt", "w") as f:
+        for file in trimmed_files:
+            f.write(f"file '{file}'\n")
+
+    subprocess.run([
+        "ffmpeg",
+        "-y",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", "file_list.txt",
+        "-c", "copy",
+        output_file
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 # -----------------------------
-# EMAIL FUNCTION
+# EMAIL
 # -----------------------------
 def send_email(receiver, filename):
     msg = EmailMessage()
@@ -123,47 +141,41 @@ def send_email(receiver, filename):
         smtp.send_message(msg)
 
 # -----------------------------
-# CLEANUP FUNCTION
+# CLEANUP
 # -----------------------------
 def cleanup():
-    folders = ["downloads"]
-    files = ["mashup.mp3", "mashup.zip"]
+    if os.path.exists("downloads"):
+        for file in os.listdir("downloads"):
+            os.remove(os.path.join("downloads", file))
+        os.rmdir("downloads")
 
-    for folder in folders:
-        if os.path.exists(folder):
-            for file in os.listdir(folder):
-                os.remove(os.path.join(folder, file))
-            os.rmdir(folder)
-
-    for file in files:
+    for file in ["mashup.mp3", "mashup.zip", "file_list.txt"]:
         if os.path.exists(file):
             os.remove(file)
 
 # -----------------------------
-# MAIN LOGIC
+# MAIN
 # -----------------------------
 if generate:
     if not singer or not email:
         st.error("Please fill all fields.")
     elif not is_valid_email(email):
-        st.error("Please enter a valid email address.")
+        st.error("Please enter a valid email.")
     else:
         try:
             with st.spinner("📥 Downloading videos..."):
                 download_videos(singer, num_videos)
 
-            with st.spinner("🎧 Processing audio..."):
-                output_file = "mashup.mp3"
-                convert_trim_merge(duration, output_file)
+            with st.spinner("🎧 Creating mashup..."):
+                create_mashup(duration, "mashup.mp3")
 
-            zip_filename = "mashup.zip"
-            with zipfile.ZipFile(zip_filename, 'w') as zipf:
-                zipf.write(output_file)
+            with zipfile.ZipFile("mashup.zip", 'w') as zipf:
+                zipf.write("mashup.mp3")
 
             with st.spinner("📧 Sending email..."):
-                send_email(email, zip_filename)
+                send_email(email, "mashup.zip")
 
-            st.success("🎉 Mashup sent successfully to your email!")
+            st.success("🎉 Mashup sent successfully!")
 
             cleanup()
 
