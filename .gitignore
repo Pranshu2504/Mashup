@@ -1,0 +1,5 @@
+.env
+downloads/
+trimmed/
+*.zip
+*.mp3
