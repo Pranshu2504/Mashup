@@ -14,7 +14,7 @@ This project was developed as part of the **Mashup Assignment**, which includes:
 ## 🚀 Live Web App
 
 👉 Deployed on Streamlit Cloud  
-(Add your deployed link here)
+https://yt-mashup.streamlit.app/
 
 ---
 
